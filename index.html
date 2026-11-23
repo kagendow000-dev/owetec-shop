@@ -1,0 +1,901 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Owetec Bussiness</title>
+<style>
+:root{--main:#1f6f5c;--bg:#f4f6f5;--card:#fff;--text:#1d2624;--warn:#c0392b;--muted:#6b7775}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--text);display:flex;min-height:100vh}
+nav{width:230px;background:var(--main);color:#fff;padding:16px;overflow-y:auto;flex-shrink:0}
+nav h1{font-size:18px;margin:0 0 4px}
+nav button{display:block;width:100%;text-align:left;background:none;border:0;color:#fff;padding:8px 10px;border-radius:6px;cursor:pointer;font-size:14px}
+nav button:hover,nav button.active{background:rgba(255,255,255,.18)}
+main{flex:1;padding:24px;overflow-x:auto;min-width:0}
+.card{background:var(--card);border-radius:10px;padding:18px;margin-bottom:18px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+h2{margin-top:0} h3{margin:18px 0 8px}
+input,select{padding:8px;border:1px solid #bbb;border-radius:6px;margin:4px 6px 4px 0;font-size:14px}
+.btn{background:var(--main);color:#fff;border:0;padding:8px 14px;border-radius:6px;cursor:pointer;margin:4px 4px 4px 0;font-size:14px}
+.btn.alt{background:#777}
+table{border-collapse:collapse;width:100%;font-size:14px;margin-top:8px}
+th,td{text-align:left;padding:6px 8px;border-bottom:1px solid #e3e7e6;vertical-align:middle}
+.num{text-align:right}
+.low{color:var(--warn);font-weight:600}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.stat{flex:1;min-width:170px;background:#eef6f3;border-radius:8px;padding:12px}
+.stat b{display:block;font-size:20px;margin-top:4px}
+.alert{background:#fff4e5;border-left:4px solid #f39c12;padding:8px 12px;margin:4px 0;border-radius:4px}
+pre{background:#fafafa;border:1px dashed #aaa;padding:12px;white-space:pre-wrap;font-family:monospace;font-size:13px}
+.barrow{display:grid;grid-template-columns:120px 1fr 150px;gap:8px;align-items:center;margin:6px 0;font-size:14px}
+.bar{height:16px;background:var(--main);border-radius:3px}
+@media print{nav,.noprint,button,input,select{display:none!important}main{padding:0}.card{box-shadow:none}}
+@media (max-width:700px){body{flex-direction:column}nav{width:auto}}
+</style>
+</head>
+<body>
+<nav id="nav"></nav>
+<main id="main"></main>
+
+<script>
+// ================= Settings =================
+const KEY = "owetec_shop_v1";
+const SHOP = "Owetec Bussiness", CUR = "KSh";
+const OWNER_MPESA = "0791188062", SUPPLIER_MPESA = "0745341943";
+const EMPTY = "Empty slot", WARN_DAYS = 3, VAT = 0.16, PTS = 100;
+const SEED_ITEMS = ["Sugar","Rice","Milk 500ml","Milk 200ml","Biscuit","Soda","Tissue","Salt","Soap",
+                    "Bread","Sweet","Detergent","Possible","Battery","Cooking oil","Flour maize","Flour wheat"];
+
+// ================= Language ([English, Swahili]) =================
+const STR = {
+  dashboard:["Dashboard","Dashibodi"], sale:["New sale","Mauzo mapya"], items:["Items","Bidhaa"],
+  stocktake:["Stocktake","Hesabu ya stoku"], customers:["Customers","Wateja"], orders:["Orders","Maagizo"],
+  reports:["Reports","Ripoti"], closing:["Daily closing","Kufunga siku"], charts:["Charts","Chati"],
+  expenses:["Expenses","Matumizi"], refunds:["Refunds","Marejesho"], needs:["Shop needs","Mahitaji ya duka"],
+  staff:["Staff & PIN","Wafanyakazi & PIN"], activity:["Activity log","Kumbukumbu"],
+  data:["Backup & export","Nakala & export"], logout:["Log out","Toka"], login:["Log in","Ingia"],
+  staff_id:["Staff ID","Kitambulisho"], pin:["PIN","PIN"], wrong_login:["Wrong ID or PIN.","Kitambulisho au PIN si sahihi."],
+  no_debt:["No debt to pay.","Hakuna deni la kulipa."]
+};
+
+// ================= State =================
+function fresh(){
+  return { lang:"en", items:[], customers:[], suppliers:[{id:1,name:"Main supplier",phone:SUPPLIER_MPESA}],
+    sales:[], orders:[], payments:[], debts:[], batches:[], expenses:[],
+    staff:[{id:1,name:"Owner",pin:"1234",role:"admin"}], activity:[], discounts:[], returns:[],
+    needs:[], reminders:[], prices:[], seq:{item:0,cust:0,supp:1,order:0,receipt:0,staff:1} };
+}
+function load(){
+  try { const raw = localStorage.getItem(KEY); if (raw) return Object.assign(fresh(), JSON.parse(raw)); }
+  catch(e) {}
+  return fresh();
+}
+let db = load();
+function save(){ localStorage.setItem(KEY, JSON.stringify(db)); }
+
+let me = null, current = "home", cart = [], editId = null, custSearch = "";
+
+// ================= Helpers =================
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const money = n => (Number(n) || 0).toFixed(2);
+const sum = a => a.reduce((x, y) => x + y, 0);
+const pad = n => String(n).padStart(2, "0");
+const ymd = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+const today = () => ymd(new Date());
+const daysAgo = n => { const d = new Date(); d.setDate(d.getDate() - n); return ymd(d); };
+const daysLeft = e => Math.round((new Date(e + "T12:00") - new Date(today() + "T12:00")) / 86400000);
+const nowTime = () => new Date().toTimeString().slice(0, 8);
+const T = k => { const e = STR[k]; return e ? (db.lang === "sw" ? e[1] : e[0]) : k; };
+const byId = (arr, id) => arr.find(x => x.id === id);
+const cust = id => db.customers.find(c => c.id === id);
+const supp = id => db.suppliers.find(s => s.id === id);
+const nameOf = id => { const i = byId(db.items, id); return i ? i.name : "(removed)"; };
+const suppName = id => { const s = supp(id); return s ? s.name : "(unknown)"; };
+const isAdmin = () => !!me && me.role === "admin";
+const expKey = e => e === "-" ? "9999-99-99" : e;
+const balance = id => db.debts.filter(d => d.custId === id).reduce((s, d) => s + (d.type === "DEBT" ? d.amount : -d.amount), 0);
+
+function logAct(action){
+  db.activity.push({date: today(), time: nowTime(), user: me ? me.name : "system", action});
+  if (db.activity.length > 500) db.activity.splice(0, db.activity.length - 500);
+}
+function page(title, html, bind){
+  $("#main").innerHTML = `<div class="card"><h2>${title}</h2>${html}</div>`;
+  if (bind) bind();
+}
+function needOwner(){ if (isAdmin()) return false; page(T("staff"), "<p>Only the owner can open this page.</p>"); return true; }
+function downloadText(name, text, type = "text/plain"){
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], {type}));
+  a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+function toCSV(rows){
+  return rows.map(r => r.map(v => { const s = String(v ?? ""); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }).join(",")).join("\n");
+}
+function waNumber(phone){
+  const d = String(phone).replace(/\D/g, "");
+  if (d.length === 10 && d[0] === "0") return "254" + d.slice(1);
+  if (d.length === 9) return "254" + d;
+  return d;
+}
+function openWA(phone, text){
+  window.open("https://wa.me/" + waNumber(phone) + "?text=" + encodeURIComponent(text), "_blank");
+}
+
+// ================= Stock batches (expiry tracking) =================
+function consumeBatches(itemId, qty){
+  const list = db.batches.filter(b => b.itemId === itemId).sort((a, b) => expKey(a.expiry).localeCompare(expKey(b.expiry)));
+  for (const b of list) {
+    if (qty <= 0) break;
+    const take = Math.min(qty, b.qty);
+    b.qty -= take; qty -= take;
+  }
+  db.batches = db.batches.filter(b => b.qty > 0);
+}
+function setStock(it, newQty, exp = "-"){
+  const diff = newQty - it.qty;
+  if (diff > 0) db.batches.push({itemId: it.id, qty: diff, expiry: exp || "-"});
+  else if (diff < 0) consumeBatches(it.id, -diff);
+  it.qty = newQty;
+}
+function earliestExpiry(id){
+  const e = db.batches.filter(b => b.itemId === id && b.qty > 0 && b.expiry !== "-").map(b => b.expiry).sort();
+  return e.length ? e[0] : "-";
+}
+function expiryAlerts(){
+  const out = [];
+  db.batches.forEach(b => {
+    if (b.qty <= 0 || b.expiry === "-") return;
+    const d = daysLeft(b.expiry), n = nameOf(b.itemId);
+    if (d < 0) out.push(`EXPIRED: ${n} (${b.qty} units, ${b.expiry})`);
+    else if (d <= WARN_DAYS) out.push(`EXPIRING: ${n} in ${d} day(s), ${b.qty} units`);
+  });
+  return out;
+}
+function lineAmount(it, qty){
+  if (it.bulkQty > 0 && qty >= it.bulkQty)
+    return Math.floor(qty / it.bulkQty) * it.bulkPrice + (qty % it.bulkQty) * it.price;
+  return qty * it.price;
+}
+function findItemTerm(raw){
+  const r = (raw || "").trim(), term = r.toLowerCase();
+  if (!term) return null;
+  const live = db.items.filter(i => i.name !== EMPTY);
+  return live.find(i => i.barcode === r) || live.find(i => String(i.id) === term)
+      || live.find(i => i.name.toLowerCase() === term) || live.find(i => i.name.toLowerCase().includes(term)) || null;
+}
+function newItem(o){
+  const it = Object.assign({id: ++db.seq.item, name: "", barcode: "-", cost: 0, price: 0, qty: 0, reorder: 5,
+                            pack: 1, bulkQty: 0, bulkPrice: 0, supplierId: 1}, o);
+  db.items.push(it);
+  return it;
+}
+function seedIfNeeded(){
+  if (!db.items.length) {
+    SEED_ITEMS.forEach(n => newItem({name: n}));
+    for (let i = 0; i < 10; i++) newItem({name: EMPTY});
+  }
+  save();
+}
+
+// ================= Login & navigation =================
+function loginScreen(){
+  $("#nav").innerHTML = "";
+  $("#main").innerHTML = `<div class="card" style="max-width:360px;margin:60px auto">
+    <h2>${SHOP}</h2>
+    <input id="lid" type="number" placeholder="${T("staff_id")}"><br>
+    <input id="lpin" type="password" placeholder="${T("pin")}"><br>
+    <button class="btn" id="loginBtn">${T("login")}</button>
+    <button class="btn alt" onclick="toggleLang()">${db.lang === "sw" ? "English" : "Kiswahili"}</button>
+    <p id="lerr" class="low"></p>
+    <p style="font-size:13px;color:var(--muted)">First time? Owner login: ID 1, PIN 1234. Change the PIN in Staff &amp; PIN.</p>
+  </div>`;
+  $("#loginBtn").onclick = () => {
+    const id = Number($("#lid").value), pin = $("#lpin").value;
+    const s = db.staff.find(x => x.id === id && x.pin === pin);
+    if (!s) { $("#lerr").textContent = T("wrong_login"); return; }
+    me = s; logAct("login"); save(); current = "home"; render();
+  };
+  $("#lpin").onkeydown = e => { if (e.key === "Enter") $("#loginBtn").click(); };
+}
+const MENU = [
+  ["home","dashboard",0],["sale","sale",0],["items","items",0],["stock","stocktake",1],
+  ["customers","customers",0],["orders","orders",0],["reports","reports",0],["closing","closing",0],
+  ["charts","charts",0],["expenses","expenses",1],["refund","refunds",1],["needs","needs",0],
+  ["staff","staff",0],["activity","activity",1],["data","data",0]
+];
+function buildNav(){
+  $("#nav").innerHTML = `<h1>${SHOP}</h1>
+    <div style="font-size:12px;opacity:.8;margin-bottom:10px">${esc(me.name)} (${me.role})</div>` +
+    MENU.filter(m => !m[2] || isAdmin())
+        .map(m => `<button class="${current === m[0] ? "active" : ""}" onclick="go('${m[0]}')">${T(m[1])}</button>`).join("") +
+    `<button onclick="toggleLang()">${db.lang === "sw" ? "English" : "Kiswahili"}</button>
+     <button onclick="logout()">${T("logout")}</button>`;
+}
+function go(k){ current = k; render(); }
+function render(){ buildNav(); VIEWS[current](); }
+function toggleLang(){ db.lang = db.lang === "sw" ? "en" : "sw"; save(); if (me) render(); else loginScreen(); }
+function logout(){ logAct("logout"); me = null; save(); loginScreen(); }
+
+// ================= Dashboard =================
+function vHome(){
+  const t = today(), ss = db.sales.filter(s => s.date === t);
+  const rev = sum(ss.map(s => s.price * s.qty)), cost = sum(ss.map(s => s.cost * s.qty));
+  const owed = sum(db.customers.map(c => Math.max(0, balance(c.id))));
+  const low = db.items.filter(i => i.name !== EMPTY && i.qty <= i.reorder);
+  const alerts = expiryAlerts();
+  page(T("dashboard") + " - " + t, `
+    <div class="row">
+      <div class="stat">Revenue today<b>${CUR} ${money(rev)}</b></div>
+      <div class="stat">Gross profit today<b>${CUR} ${money(rev - cost)}</b></div>
+      <div class="stat">Owed to you<b>${CUR} ${money(owed)}</b></div>
+      <div class="stat">Pending orders<b>${db.orders.filter(o => !o.received).length}</b></div>
+    </div>
+    <h3>Alerts</h3>
+    ${low.map(i => `<div class="alert">LOW STOCK: ${esc(i.name)} (${i.qty} left)</div>`).join("")}
+    ${alerts.map(a => `<div class="alert">${esc(a)}</div>`).join("")}
+    ${!low.length && !alerts.length ? "<p>No alerts.</p>" : ""}`);
+}
+
+// ================= Sales =================
+function cartTotals(){
+  let subtotal = 0;
+  const lines = cart.map(l => {
+    const it = byId(db.items, l.itemId), amt = lineAmount(it, l.qty);
+    subtotal += amt;
+    return {it, qty: l.qty, amt};
+  });
+  const dt = $("#discType").value, dv = Number($("#discVal").value) || 0;
+  let disc = dt === "1" ? subtotal * dv / 100 : dt === "2" ? dv : 0;
+  disc = Math.max(0, Math.min(disc, subtotal));
+  const cv = $("#cust").value;
+  const c = cv === "-1" ? null : cust(Number(cv)) || null;
+  let pts = 0;
+  if (c) {
+    const max = Math.min(c.points, Math.floor(subtotal - disc));
+    pts = Math.max(0, Math.min(Number($("#pts").value) || 0, max));
+  }
+  return {lines, subtotal, disc, pts, total: subtotal - disc - pts, cust: c};
+}
+function renderCart(){
+  const t = cartTotals();
+  $("#cartBody").innerHTML = t.lines.map(l =>
+    `<tr><td>${esc(l.it.name)}</td><td>${l.qty}</td><td class="num">${money(l.amt)}</td>
+     <td><button class="btn alt" onclick="removeLine(${l.it.id})">Remove</button></td></tr>`).join("")
+    || `<tr><td colspan="4">No items yet. Scan a barcode or type an item name.</td></tr>`;
+  $("#totalLine").textContent = `Subtotal ${CUR} ${money(t.subtotal)}  |  Discount ${money(t.disc)}  |  Points ${t.pts}  |  TO PAY ${CUR} ${money(t.total)}`;
+}
+function removeLine(id){ cart = cart.filter(l => l.itemId !== id); renderCart(); }
+function addLine(){
+  const msg = $("#saleMsg"); msg.textContent = "";
+  const it = findItemTerm($("#itemIn").value);
+  if (!it) { msg.textContent = "No item matches. Check the name or barcode."; return; }
+  const q = parseInt($("#qtyIn").value, 10);
+  if (!(q > 0)) { msg.textContent = "Quantity must be at least 1."; return; }
+  const line = cart.find(l => l.itemId === it.id), already = line ? line.qty : 0;
+  if (already + q > it.qty) { msg.textContent = `Not enough stock (${it.qty - already} left).`; return; }
+  if (line) line.qty += q; else cart.push({itemId: it.id, qty: q});
+  $("#itemIn").value = ""; $("#qtyIn").value = 1; renderCart(); $("#itemIn").focus();
+}
+function receiptText(r){
+  const L = [], line = (a, b) => L.push(a.padEnd(24) + String(b).padStart(12));
+  L.push(`========== RECEIPT #${r.no} ==========`, SHOP, r.date);
+  if (r.cust) L.push("Customer: " + r.cust);
+  L.push("Served by: " + me.name, "-".repeat(38));
+  r.lines.forEach(l => L.push(l.name.slice(0, 18).padEnd(18) + (" x" + l.qty).padEnd(6) + money(l.amt).padStart(14)));
+  L.push("-".repeat(38));
+  line("Subtotal", money(r.subtotal));
+  if (r.disc > 0) line("Discount", "-" + money(r.disc));
+  if (r.pts > 0) line("Points used", "-" + r.pts);
+  line("TOTAL " + CUR, money(r.total));
+  L.push("VAT included: " + money(r.total * VAT / (1 + VAT)));
+  L.push(r.method === "MPESA" ? "Paid by M-Pesa " + r.ref
+       : r.method === "CREDIT" ? `On credit. Balance now: ${CUR} ${money(r.balAfter)}` : "Paid by cash");
+  if (r.earned > 0) L.push("Loyalty points earned: " + r.earned);
+  L.push("Thank you for shopping at " + SHOP + "!", "=".repeat(38));
+  return L.join("\n");
+}
+function completeSale(){
+  const msg = $("#saleMsg"); msg.textContent = "";
+  if (!cart.length) { msg.textContent = "Nothing added."; return; }
+  for (const l of cart) {
+    const it = byId(db.items, l.itemId);
+    if (l.qty > it.qty) { msg.textContent = `Not enough stock for ${it.name} (${it.qty} left).`; return; }
+  }
+  const t = cartTotals(), method = $("#method").value, ref = $("#mpesaRef").value.trim() || "-";
+  if (method === "MPESA" && ref === "-") { msg.textContent = "Enter the M-Pesa transaction code."; return; }
+  if (method === "CREDIT") {
+    if (!t.cust) { msg.textContent = "Credit needs a registered customer (not walk-in)."; return; }
+    if (t.cust.creditLimit > 0 && balance(t.cust.id) + t.total > t.cust.creditLimit) {
+      msg.textContent = `Credit limit exceeded (limit ${CUR} ${money(t.cust.creditLimit)}). Sale cancelled.`; return;
+    }
+  }
+  const no = ++db.seq.receipt, date = today(), custId = t.cust ? t.cust.id : 0;
+  const ratio = t.subtotal ? t.total / t.subtotal : 1;
+  const earned = t.cust ? Math.floor(t.total / PTS) : 0;
+  t.lines.forEach(l => {
+    l.it.qty -= l.qty;
+    consumeBatches(l.it.id, l.qty);
+    db.sales.push({receipt: no, date, custId, itemId: l.it.id, qty: l.qty,
+                   price: l.amt * ratio / l.qty, cost: l.it.cost, method, ref});
+  });
+  if (method === "MPESA") db.payments.push({date, dir: "IN", phone: OWNER_MPESA, amount: t.total, ref});
+  if (method === "CREDIT") db.debts.push({custId, date, amount: t.total, type: "DEBT", method: "-"});
+  if (t.cust) t.cust.points += earned - t.pts;
+  if (t.disc > 0) db.discounts.push({receipt: no, date, amount: t.disc, reason: $("#discReason").value.trim() || "-"});
+  const text = receiptText({no, date, cust: t.cust ? t.cust.name : "", subtotal: t.subtotal, disc: t.disc, pts: t.pts,
+    total: t.total, method, ref, earned, balAfter: balance(custId),
+    lines: t.lines.map(l => ({name: l.it.name, qty: l.qty, amt: l.amt}))});
+  logAct(`sale #${no} ${money(t.total)} ${method}`);
+  cart = []; save();
+  vSale();
+  $("#receiptBox").innerHTML = `<h3>Receipt #${no}</h3><pre id="rcpt">${esc(text)}</pre>
+    <button class="btn" onclick="window.print()">Print</button>
+    <button class="btn alt" onclick="downloadText('receipt_${no}.txt', document.getElementById('rcpt').textContent)">Download</button>`;
+}
+function vSale(){
+  const custOpts = `<option value="-1">Walk-in customer</option>` +
+    db.customers.map(c => `<option value="${c.id}">${esc(c.name)} (${esc(c.phone)})</option>`).join("");
+  const list = db.items.filter(i => i.name !== EMPTY).map(i => `<option value="${esc(i.name)}">`).join("");
+  page(T("sale"), `
+    <div class="row">
+      <label>Customer <select id="cust">${custOpts}</select></label>
+      <input id="itemIn" list="itemList" placeholder="Scan barcode or type name" autofocus>
+      <datalist id="itemList">${list}</datalist>
+      <input id="qtyIn" type="number" min="1" value="1" style="width:80px">
+      <button class="btn" id="addLine">Add</button>
+    </div>
+    <p id="saleMsg" class="low"></p>
+    <table><thead><tr><th>Item</th><th>Qty</th><th class="num">Amount</th><th></th></tr></thead>
+      <tbody id="cartBody"></tbody></table>
+    <div class="row" style="margin-top:12px">
+      <label>Discount <select id="discType"><option value="0">None</option><option value="1">Percent %</option><option value="2">Fixed amount</option></select></label>
+      <input id="discVal" type="number" value="0" style="width:90px" placeholder="Value">
+      <input id="discReason" placeholder="Reason for discount">
+      <input id="pts" type="number" min="0" value="0" style="width:110px" placeholder="Points to use">
+    </div>
+    <div class="row">
+      <label>Payment <select id="method"><option value="CASH">Cash</option><option value="MPESA">M-Pesa</option><option value="CREDIT">On credit</option></select></label>
+      <input id="mpesaRef" placeholder="M-Pesa transaction code">
+    </div>
+    <h3 id="totalLine"></h3>
+    <button class="btn" id="complete">Complete sale &amp; receipt</button>
+    <div id="receiptBox"></div>`, () => {
+      $("#addLine").onclick = addLine;
+      $("#itemIn").onkeydown = e => { if (e.key === "Enter") { e.preventDefault(); addLine(); } };
+      ["#cust", "#discType", "#discVal", "#pts"].forEach(s => $(s).addEventListener("input", renderCart));
+      $("#complete").onclick = completeSale;
+      renderCart();
+    });
+}
+
+// ================= Items & stock =================
+function saveItemForm(){
+  const name = $("#f_name").value.trim();
+  if (!name) return alert("Enter an item name.");
+  const data = {
+    name, barcode: $("#f_bc").value.trim() || "-",
+    cost: Number($("#f_cost").value) || 0, price: Number($("#f_price").value) || 0,
+    reorder: Number($("#f_reorder").value) || 0, pack: Math.max(1, Number($("#f_pack").value) || 1),
+    bulkQty: Number($("#f_bulkQty").value) || 0, bulkPrice: Number($("#f_bulkPrice").value) || 0,
+    supplierId: Number($("#f_sup").value)
+  };
+  const qty = Number($("#f_qty").value) || 0, exp = $("#f_exp").value || "-";
+  if (editId) {
+    if (!isAdmin()) return alert(T("owner_only") || "Only the owner can edit items.");
+    const it = byId(db.items, editId);
+    if (it.price !== data.price) db.prices.push({date: today(), itemId: it.id, type: "PRICE", from: money(it.price), to: money(data.price)});
+    if (it.cost !== data.cost) db.prices.push({date: today(), itemId: it.id, type: "COST", from: money(it.cost), to: money(data.cost)});
+    if (qty !== it.qty) { logAct(`stock of ${it.name} ${it.qty} -> ${qty}`); setStock(it, qty, exp); }
+    Object.assign(it, data);
+    logAct("edited " + it.name);
+    editId = null;
+  } else {
+    const it = newItem(Object.assign({}, data, {qty: 0}));
+    setStock(it, qty, exp);
+    logAct("added item " + name);
+  }
+  save(); vItems();
+}
+function editItem(id){ editId = id; vItems(); }
+function vItems(){
+  const it = editId ? byId(db.items, editId) : null;
+  const v = k => it ? esc(it[k]) : "";
+  const supOpts = db.suppliers.map(s => `<option value="${s.id}" ${it && it.supplierId === s.id ? "selected" : ""}>${esc(s.name)}</option>`).join("");
+  const rows = db.items.map(i => `<tr><td>${i.id}</td><td>${esc(i.name)}</td><td>${esc(i.barcode)}</td>
+    <td class="num">${money(i.cost)}</td><td class="num">${money(i.price)}</td><td class="num">${i.qty}</td>
+    <td>${earliestExpiry(i.id)}</td>
+    <td>${i.name === EMPTY ? "(empty slot)" : i.qty <= i.reorder ? '<span class="low">LOW</span>' : "ok"}</td>
+    <td>${isAdmin() ? `<button class="btn alt" onclick="editItem(${i.id})">Edit</button>` : ""}</td></tr>`).join("");
+  page(T("items"), `
+    <h3>${it ? "Edit: " + v("name") : "Add item"}</h3>
+    <div class="row">
+      <input id="f_name" placeholder="Name" value="${v("name")}">
+      <input id="f_bc" placeholder="Barcode" value="${it ? v("barcode") : ""}">
+      <input id="f_cost" type="number" step="0.01" placeholder="Cost per unit" value="${it ? it.cost : ""}">
+      <input id="f_price" type="number" step="0.01" placeholder="Selling price per unit" value="${it ? it.price : ""}">
+      <input id="f_qty" type="number" placeholder="Stock" value="${it ? it.qty : ""}">
+      <input id="f_reorder" type="number" placeholder="Reorder at" value="${it ? it.reorder : 5}">
+      <input id="f_pack" type="number" min="1" placeholder="Units per pack" value="${it ? it.pack : 1}">
+      <input id="f_bulkQty" type="number" placeholder="Bulk units (0 = none)" value="${it ? it.bulkQty : 0}">
+      <input id="f_bulkPrice" type="number" step="0.01" placeholder="Bulk price" value="${it ? it.bulkPrice : 0}">
+      <select id="f_sup">${supOpts}</select>
+      <input id="f_exp" type="date" title="Expiry date of this stock">
+    </div>
+    <button class="btn" onclick="saveItemForm()">${it ? "Save changes" : "Add item"}</button>
+    ${it ? `<button class="btn alt" onclick="editId=null;vItems()">Cancel</button>` : ""}
+    <table><thead><tr><th>ID</th><th>Item</th><th>Barcode</th><th class="num">Cost</th><th class="num">Price</th>
+      <th class="num">Stock</th><th>Earliest expiry</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>`);
+}
+function vStock(){
+  if (needOwner()) return;
+  const rows = db.items.filter(i => i.name !== EMPTY).map(i =>
+    `<tr><td>${esc(i.name)}</td><td class="num">${i.qty}</td>
+     <td><input type="number" id="cnt_${i.id}" value="${i.qty}" style="width:90px"></td></tr>`).join("");
+  page(T("stocktake"), `<p>Type the counted quantity for each item, then save.</p>
+    <table><thead><tr><th>Item</th><th class="num">Expected</th><th>Counted</th></tr></thead><tbody>${rows}</tbody></table>
+    <button class="btn" onclick="saveStocktake()">Save stocktake</button>`);
+}
+function saveStocktake(){
+  let changed = 0;
+  db.items.filter(i => i.name !== EMPTY).forEach(i => {
+    const counted = parseInt($("#cnt_" + i.id).value, 10);
+    if (!isNaN(counted) && counted !== i.qty) { setStock(i, counted); changed++; }
+  });
+  logAct(`stocktake: ${changed} item(s) adjusted`); save();
+  alert(`Stocktake saved. ${changed} item(s) adjusted.`); vStock();
+}
+
+// ================= Customers =================
+function custRowsHtml(){
+  const q = custSearch.toLowerCase();
+  const list = db.customers.filter(c => !q || c.name.toLowerCase().includes(q) || c.phone.includes(q));
+  return list.map(c => `<tr><td>${c.id}</td><td>${esc(c.name)}</td><td>${esc(c.phone)}</td>
+    <td class="num">${money(balance(c.id))}</td><td class="num">${c.points}</td>
+    <td class="num">${c.creditLimit > 0 ? money(c.creditLimit) : "none"}</td>
+    <td><button class="btn alt" onclick="showHistory(${c.id})">History</button>
+        <button class="btn alt" onclick="payDebt(${c.id})">Pay</button>
+        <button class="btn alt" onclick="setLimit(${c.id})">Limit</button>
+        <button class="btn alt" onclick="remind(${c.id})">Remind</button></td></tr>`).join("")
+    || `<tr><td colspan="7">No customers found.</td></tr>`;
+}
+function birthdaysHtml(){
+  const days = [...Array(7)].map((_, k) => daysAgo(-k).slice(5));
+  const l = db.customers.filter(c => days.includes(c.birthday));
+  return l.length ? l.map(c => `<div>${esc(c.name)} (${esc(c.phone)}) - ${c.birthday}</div>`).join("") : "<p>None.</p>";
+}
+function aging(){
+  return db.customers.filter(c => balance(c.id) > 0).map(c => {
+    let credit = 0; const charges = [];
+    db.debts.forEach(d => {
+      if (d.custId !== c.id) return;
+      if (d.type === "PAYMENT" || d.amount < 0) credit += Math.abs(d.amount);
+      else charges.push(d.amount, d.date);
+    });
+    const b = [0, 0, 0];
+    for (let k = 0; k < charges.length; k += 2) {
+      let left = charges[k];
+      const use = Math.min(credit, left); credit -= use; left -= use;
+      if (left <= 0) continue;
+      const age = -daysLeft(charges[k + 1]);
+      b[age <= 7 ? 0 : age <= 30 ? 1 : 2] += left;
+    }
+    return {name: c.name, b};
+  });
+}
+function vCustomers(){
+  const ag = aging().map(r => `<tr><td>${esc(r.name)}</td><td class="num">${money(r.b[0])}</td>
+    <td class="num">${money(r.b[1])}</td><td class="num">${money(r.b[2])}</td></tr>`).join("");
+  page(T("customers"), `
+    <h3>Add customer</h3>
+    <div class="row">
+      <input id="c_name" placeholder="Name"><input id="c_phone" placeholder="Phone">
+      <input id="c_limit" type="number" placeholder="Credit limit (0 = none)">
+      <input id="c_bd" placeholder="Birthday MM-DD">
+      <button class="btn" onclick="addCustomer()">Add customer</button>
+    </div>
+    <input placeholder="Search name or phone" value="${esc(custSearch)}"
+           oninput="custSearch=this.value;$('#custBody').innerHTML=custRowsHtml()">
+    <table><thead><tr><th>ID</th><th>Name</th><th>Phone</th><th class="num">Owes</th><th class="num">Points</th>
+      <th class="num">Limit</th><th></th></tr></thead><tbody id="custBody">${custRowsHtml()}</tbody></table>
+    <div id="extra"></div>
+    <h3>Birthdays, next 7 days</h3>${birthdaysHtml()}
+    <h3>Debt aging (amount owed by age)</h3>
+    <table><thead><tr><th>Customer</th><th class="num">0-7 days</th><th class="num">8-30 days</th><th class="num">Over 30</th></tr></thead>
+    <tbody>${ag || '<tr><td colspan="4">No outstanding debts.</td></tr>'}</tbody></table>`);
+}
+function addCustomer(){
+  const name = $("#c_name").value.trim();
+  if (!name) return alert("Enter a customer name.");
+  const c = {id: ++db.seq.cust, name, phone: $("#c_phone").value.trim() || "-",
+             creditLimit: Number($("#c_limit").value) || 0, points: 0, birthday: $("#c_bd").value.trim() || "-"};
+  db.customers.push(c); logAct("added customer " + name); save(); vCustomers();
+}
+function showHistory(id){
+  const c = cust(id), rows = db.sales.filter(s => s.custId === id && s.qty > 0);
+  let total = 0;
+  const body = rows.map(r => { total += r.price * r.qty;
+    return `<tr><td>${r.receipt}</td><td>${r.date}</td><td>${esc(nameOf(r.itemId))}</td><td class="num">${r.qty}</td>
+            <td class="num">${money(r.price * r.qty)}</td><td>${r.method}</td></tr>`; }).join("");
+  $("#extra").innerHTML = `<h3>Purchase history: ${esc(c.name)}</h3>
+    <table><thead><tr><th>Receipt</th><th>Date</th><th>Item</th><th class="num">Qty</th><th class="num">Amount</th><th>Method</th></tr></thead>
+    <tbody>${body || '<tr><td colspan="6">No purchases yet.</td></tr>'}</tbody></table>
+    <p>Total bought: ${CUR} ${money(total)} | Owes: ${CUR} ${money(balance(id))} | Points: ${c.points}</p>`;
+}
+function payDebt(id){
+  const c = cust(id), bal = balance(id);
+  if (bal <= 0) return alert(T("no_debt"));
+  const amt0 = parseFloat(prompt(`${c.name} owes ${CUR} ${money(bal)}. Amount paid:`));
+  if (!(amt0 > 0)) return;
+  const amt = Math.min(amt0, bal), date = today();
+  if (prompt("Paid how? Type 1 for cash, 2 for M-Pesa", "1") === "2") {
+    const ref = (prompt("M-Pesa transaction code:") || "").trim() || "-";
+    db.payments.push({date, dir: "IN", phone: OWNER_MPESA, amount: amt, ref});
+    db.debts.push({custId: id, date, amount: amt, type: "PAYMENT", method: "MPESA"});
+  } else {
+    db.debts.push({custId: id, date, amount: amt, type: "PAYMENT", method: "CASH"});
+  }
+  logAct(`debt payment from ${c.name} ${money(amt)}`); save(); vCustomers();
+  alert(`${c.name} now owes ${CUR} ${money(balance(id))}`);
+}
+function setLimit(id){
+  if (!isAdmin()) return alert(T("owner_only") || "Only the owner can change limits.");
+  const c = cust(id), v = parseFloat(prompt(`New credit limit for ${c.name} (0 = no limit):`, c.creditLimit));
+  if (isNaN(v)) return;
+  c.creditLimit = v; logAct(`credit limit of ${c.name} set to ${money(v)}`); save(); vCustomers();
+}
+function remind(id){
+  const c = cust(id), b = balance(id);
+  if (b <= 0) return alert(T("no_debt"));
+  if (c.phone === "-") return alert("No phone number saved for " + c.name + ".");
+  const text = `Hello ${c.name}, this is ${SHOP}. You have an outstanding balance of ${CUR} ${money(b)}. ` +
+               `Please pay at your earliest convenience via M-Pesa to ${OWNER_MPESA}. Thank you!`;
+  db.reminders.push({date: today(), custId: id, amount: b}); save();
+  openWA(c.phone, text);
+}
+
+// ================= Orders & suppliers =================
+function orderMessage(o){
+  const it = byId(db.items, o.itemId), s = supp(o.supplierId);
+  return `Hello ${s.name}, this is ${SHOP}.\nPlease supply the following:\nOrder #${o.id} (${o.date})\n` +
+         `Item: ${it.name}\nQuantity: ${o.qty} units\nAgreed unit cost: ${CUR} ${money(o.unitCost)}\n` +
+         `Total: ${CUR} ${money(o.qty * o.unitCost)}\nPlease confirm availability and delivery time. Thank you!`;
+}
+function resendOrder(id){ const o = byId(db.orders, id); openWA(supp(o.supplierId).phone, orderMessage(o)); }
+function createOrder(){
+  const it = findItemTerm($("#o_item").value);
+  if (!it) return alert("Commodity not found. Type its name from your list.");
+  const packs = Number($("#o_packs").value), per = Number($("#o_cost").value) || 0;
+  if (!(packs > 0)) return alert("Enter the number of packs.");
+  const o = {id: ++db.seq.order, date: today(), itemId: it.id, qty: packs * it.pack,
+             unitCost: per / it.pack, received: false, supplierId: Number($("#o_sup").value)};
+  db.orders.push(o); logAct(`order ${o.qty} units of ${it.name}`); save();
+  if ($("#o_wa").checked) openWA(supp(o.supplierId).phone, orderMessage(o));
+  vOrders();
+}
+function receiveOrder(id){
+  const o = byId(db.orders, id);
+  if (o.received) return alert("This order was already received.");
+  const it = byId(db.items, o.itemId), s = supp(o.supplierId);
+  const exp = (prompt("Expiry date of this delivery YYYY-MM-DD (leave blank for none):") || "").trim() || "-";
+  const ref = (prompt("Supplier M-Pesa transaction code:") || "").trim() || "-";
+  if (it.cost !== o.unitCost) db.prices.push({date: today(), itemId: it.id, type: "COST", from: money(it.cost), to: money(o.unitCost)});
+  it.cost = o.unitCost;
+  setStock(it, it.qty + o.qty, exp);
+  o.received = true;
+  db.payments.push({date: today(), dir: "OUT", phone: s ? s.phone : SUPPLIER_MPESA, amount: o.qty * o.unitCost, ref});
+  logAct(`received order #${o.id} ${it.name}`); save(); vOrders();
+}
+function draftOrders(){
+  const g = {};
+  db.items.forEach(i => {
+    if (i.name === EMPTY || i.qty > i.reorder) return;
+    const need = Math.max(i.reorder * 2 - i.qty, 1);
+    const units = Math.ceil(need / i.pack) * i.pack;
+    (g[i.supplierId] = g[i.supplierId] || []).push({it: i, units});
+  });
+  return g;
+}
+function showDrafts(){
+  const g = draftOrders(), keys = Object.keys(g);
+  $("#extra").innerHTML = keys.length ? keys.map(sid => {
+    const s = supp(Number(sid));
+    return `<div class="card"><b>${esc(s ? s.name : "?")}</b><ul>${g[sid].map(x => `<li>${esc(x.it.name)}: ${x.units} units</li>`).join("")}</ul>
+      <button class="btn" onclick="createDrafts(${sid})">Create orders &amp; send on WhatsApp</button></div>`;
+  }).join("") : "<p>Nothing is low. No orders needed.</p>";
+}
+function createDrafts(sid){
+  const list = draftOrders()[sid] || [], s = supp(sid);
+  let lines = "";
+  list.forEach(x => {
+    db.orders.push({id: ++db.seq.order, date: today(), itemId: x.it.id, qty: x.units,
+                    unitCost: x.it.cost, received: false, supplierId: sid});
+    lines += `- ${x.it.name}: ${x.units} units\n`;
+  });
+  logAct("auto-reorder drafts created for " + (s ? s.name : sid)); save();
+  if (s) openWA(s.phone, `Hello ${s.name}, this is ${SHOP}.\nPlease supply the following:\n${lines}Please confirm availability and delivery time. Thank you!`);
+  vOrders();
+}
+function addSupplier(){
+  const name = $("#s_name").value.trim(); if (!name) return alert("Enter a supplier name.");
+  db.suppliers.push({id: ++db.seq.supp, name, phone: $("#s_phone").value.trim() || "-"});
+  logAct("added supplier " + name); save(); vOrders();
+}
+function vOrders(){
+  const supOpts = db.suppliers.map(s => `<option value="${s.id}">${esc(s.name)} (${esc(s.phone)})</option>`).join("");
+  const list = db.items.filter(i => i.name !== EMPTY).map(i => `<option value="${esc(i.name)}">`).join("");
+  const pend = db.orders.filter(o => !o.received).map(o => `<tr><td>#${o.id}</td><td>${o.date}</td>
+    <td>${esc(nameOf(o.itemId))}</td><td class="num">${o.qty}</td><td>${esc(suppName(o.supplierId))}</td>
+    <td><button class="btn" onclick="receiveOrder(${o.id})">Receive</button>
+        <button class="btn alt" onclick="resendOrder(${o.id})">WhatsApp</button></td></tr>`).join("");
+  page(T("orders"), `
+    <h3>New order</h3>
+    <div class="row">
+      <input id="o_item" list="orderItems" placeholder="Commodity name">
+      <datalist id="orderItems">${list}</datalist>
+      <select id="o_sup">${supOpts}</select>
+      <input id="o_packs" type="number" min="1" placeholder="Number of packs">
+      <input id="o_cost" type="number" step="0.01" placeholder="Cost per pack">
+      <label><input type="checkbox" id="o_wa" checked style="width:auto"> Send on WhatsApp</label>
+      <button class="btn" onclick="createOrder()">Save order</button>
+    </div>
+    <p><button class="btn alt" onclick="showDrafts()">Auto-reorder drafts (low stock)</button></p>
+    <div id="extra"></div>
+    <h3>Pending orders</h3>
+    <table><thead><tr><th>Order</th><th>Date</th><th>Item</th><th class="num">Units</th><th>Supplier</th><th></th></tr></thead>
+      <tbody>${pend || '<tr><td colspan="6">None.</td></tr>'}</tbody></table>
+    <h3>Suppliers</h3>
+    <div class="row">
+      <input id="s_name" placeholder="Supplier name"><input id="s_phone" placeholder="M-Pesa / WhatsApp number">
+      <button class="btn" onclick="addSupplier()">Add supplier</button>
+    </div>
+    <table><thead><tr><th>ID</th><th>Name</th><th>Number</th></tr></thead>
+      <tbody>${db.suppliers.map(s => `<tr><td>${s.id}</td><td>${esc(s.name)}</td><td>${esc(s.phone)}</td></tr>`).join("")}</tbody></table>`);
+}
+
+// ================= Debts =================
+function vNeeds(){
+  page(T("needs"), `
+    <div class="row"><input id="need" placeholder="What does the shop need?">
+    <button class="btn" onclick="addNeed()">Add</button></div>
+    <ul>${db.needs.map(n => `<li>${n.date} - ${esc(n.text)}</li>`).join("") || "<li>Empty.</li>"}</ul>`);
+}
+function addNeed(){
+  const t = $("#need").value.trim(); if (!t) return;
+  db.needs.push({date: today(), text: t}); save(); vNeeds();
+}
+
+// ================= Expenses & refunds =================
+function vExpenses(){
+  if (needOwner()) return;
+  page(T("expenses"), `
+    <div class="row">
+      <input id="e_cat" placeholder="Category (rent, electricity, transport...)">
+      <input id="e_amt" type="number" step="0.01" placeholder="Amount">
+      <input id="e_note" placeholder="Note">
+      <button class="btn" onclick="addExpense()">Record expense</button>
+    </div>
+    <table><thead><tr><th>Date</th><th>Category</th><th class="num">Amount</th><th>Note</th></tr></thead>
+      <tbody>${db.expenses.slice(-30).reverse().map(e => `<tr><td>${e.date}</td><td>${esc(e.category)}</td>
+        <td class="num">${money(e.amount)}</td><td>${esc(e.note)}</td></tr>`).join("")}</tbody></table>`);
+}
+function addExpense(){
+  const cat = $("#e_cat").value.trim(), amt = Number($("#e_amt").value);
+  if (!cat || !(amt > 0)) return alert("Enter a category and an amount.");
+  db.expenses.push({date: today(), category: cat, amount: amt, note: $("#e_note").value.trim() || "-"});
+  logAct(`expense ${cat} ${money(amt)}`); save(); vExpenses();
+}
+function vRefund(){
+  if (needOwner()) return;
+  page(T("refunds"), `
+    <p>Enter the receipt number. The stock goes back, and the money is returned in the same way it was paid.</p>
+    <div class="row"><input id="rno" type="number" placeholder="Receipt number">
+    <button class="btn danger" onclick="refundReceipt()">Refund receipt</button></div>`);
+}
+function refundReceipt(){
+  const no = Number($("#rno").value);
+  const rows = db.sales.filter(s => s.receipt === no && s.qty > 0);
+  if (!rows.length) return alert("No such receipt.");
+  if (db.returns.includes(no)) return alert("This receipt was already refunded.");
+  let refund = 0;
+  rows.forEach(r => {
+    const it = byId(db.items, r.itemId);
+    if (it) it.qty += r.qty;
+    db.batches.push({itemId: r.itemId, qty: r.qty, expiry: "-"});
+    refund += r.price * r.qty;
+    db.sales.push(Object.assign({}, r, {date: today(), qty: -r.qty, ref: "REFUND"}));
+  });
+  const first = rows[0];
+  if (first.method === "MPESA") {
+    const c = cust(first.custId);
+    db.payments.push({date: today(), dir: "OUT", phone: c ? c.phone : OWNER_MPESA, amount: refund, ref: "REFUND #" + no});
+  } else if (first.method === "CREDIT") {
+    db.debts.push({custId: first.custId, date: today(), amount: -refund, type: "DEBT", method: "-"});
+  }
+  db.returns.push(no);
+  logAct(`refund receipt #${no} ${money(refund)}`); save();
+  alert(`Refunded ${CUR} ${money(refund)}. Stock returned.`); vRefund();
+}
+
+// ================= Reports, closing, charts =================
+function reportText(period){
+  const inP = d => period == 1 ? d === today() : period == 2 ? d >= daysAgo(6)
+                 : period == 3 ? d.slice(0, 7) === today().slice(0, 7) : true;
+  let rev = 0, cost = 0, exp = 0, pin = 0, pout = 0;
+  const perItem = {};
+  db.sales.forEach(s => {
+    if (!inP(s.date)) return;
+    rev += s.price * s.qty; cost += s.cost * s.qty;
+    const n = nameOf(s.itemId); perItem[n] = (perItem[n] || 0) + (s.price - s.cost) * s.qty;
+  });
+  db.expenses.forEach(e => { if (inP(e.date)) exp += e.amount; });
+  db.payments.forEach(p => { if (!inP(p.date)) return; if (p.dir === "IN") pin += p.amount; else pout += p.amount; });
+  const owed = sum(db.customers.map(c => Math.max(0, balance(c.id))));
+  const L = [`--- REPORT (${["", "Today", "Last 7 days", "This month", "All time"][period]}) ---`,
+    `Revenue:          ${CUR} ${money(rev)}`, `  of which VAT:   ${CUR} ${money(rev * VAT / (1 + VAT))}`,
+    `Cost of goods:    ${CUR} ${money(cost)}`, `Gross profit:     ${CUR} ${money(rev - cost)}`,
+    `Expenses:         ${CUR} ${money(exp)}`, `Net profit:       ${CUR} ${money(rev - cost - exp)}`, "", "Profit by item:"];
+  Object.entries(perItem).forEach(([n, p]) => L.push(`  ${n.padEnd(22)} ${CUR} ${money(p)}`));
+  L.push("", `M-Pesa received:   ${CUR} ${money(pin)}`, `Paid to suppliers: ${CUR} ${money(pout)}`,
+         `Total owed to you: ${CUR} ${money(owed)}`, "", "Restock needed:");
+  const low = db.items.filter(i => i.name !== EMPTY && i.qty <= i.reorder);
+  if (low.length) low.forEach(i => L.push(`  ${i.name}: have ${i.qty}, order ${Math.max(i.reorder * 2 - i.qty, 1)} units`));
+  else L.push("  Nothing is low.");
+  L.push("", "Pending supplier orders:");
+  const pend = db.orders.filter(o => !o.received);
+  if (pend.length) pend.forEach(o => L.push(`  #${o.id}: ${o.qty} x ${nameOf(o.itemId)} from ${suppName(o.supplierId)} (${o.date})`));
+  else L.push("  None.");
+  L.push("", "Shop needs:");
+  if (db.needs.length) db.needs.forEach(n => L.push(`  ${n.date} ${n.text}`)); else L.push("  Empty.");
+  return L.join("\n");
+}
+function vReports(){
+  page(T("reports"), `
+    <div class="row">
+      <select id="period"><option value="1">Today</option><option value="2">Last 7 days</option>
+        <option value="3">This month</option><option value="4">All time</option></select>
+      <button class="btn" onclick="$('#repOut').textContent=reportText(Number($('#period').value))">Show report</button>
+      <button class="btn alt" onclick="downloadText('report_${today()}.txt', $('#repOut').textContent)">Download .txt</button>
+    </div>
+    <pre id="repOut">Choose a period and press Show report.</pre>`);
+}
+function closingData(){
+  const t = today();
+  let cashSales = 0, mpesa = 0, credit = 0, revenue = 0, cost = 0;
+  const receipts = new Set();
+  db.sales.forEach(s => {
+    if (s.date !== t) return;
+    const a = s.price * s.qty; revenue += a; cost += s.cost * s.qty;
+    if (s.qty > 0) receipts.add(s.receipt);
+    if (s.method === "MPESA") mpesa += a; else if (s.method === "CREDIT") credit += a; else cashSales += a;
+  });
+  let added = 0, collected = 0, cashIn = 0;
+  db.debts.forEach(d => {
+    if (d.date !== t) return;
+    if (d.type === "DEBT") added += d.amount;
+    else { collected += d.amount; if (d.method === "CASH") cashIn += d.amount; }
+  });
+  let mIn = 0, mOut = 0;
+  db.payments.forEach(p => { if (p.date !== t) return; if (p.dir === "IN") mIn += p.amount; else mOut += p.amount; });
+  const exp = sum(db.expenses.filter(e => e.date === t).map(e => e.amount));
+  const expected = cashSales + cashIn - exp;
+  const text = [`--- DAILY CLOSING: ${t} ---`,
+    `Receipts issued:    ${receipts.size}`, `Revenue:            ${CUR} ${money(revenue)}`,
+    `Gross profit:       ${CUR} ${money(revenue - cost)}`, `Expenses today:     ${CUR} ${money(exp)}`,
+    `  Cash sales:       ${CUR} ${money(cashSales)}`, `  M-Pesa sales:     ${CUR} ${money(mpesa)}`,
+    `  On credit:        ${CUR} ${money(credit)}`, `Debts added:        ${CUR} ${money(added)}`,
+    `Debts collected:    ${CUR} ${money(collected)}`, `M-Pesa received:    ${CUR} ${money(mIn)}`,
+    `Paid to suppliers:  ${CUR} ${money(mOut)}`, `Expected cash:      ${CUR} ${money(expected)}`].join("\n");
+  return {text, expected};
+}
+function vClosing(){
+  const {text, expected} = closingData();
+  page(T("closing"), `
+    <pre id="clText">${esc(text)}</pre>
+    <div class="row">
+      <input id="counted" type="number" step="0.01" placeholder="Cash counted in drawer">
+      <button class="btn" onclick="checkCash(${expected})">Check cash</button>
+      <button class="btn alt" onclick="downloadText('closing_${today()}.txt', document.getElementById('clText').textContent)">Download .txt</button>
+    </div>
+    <div id="cashRes"></div>`);
+}
+function checkCash(expected){
+  const counted = Number($("#counted").value), diff = counted - expected;
+  const word = diff === 0 ? "(matches)" : diff > 0 ? "(over)" : "(short)";
+  $("#cashRes").innerHTML = `<p><b>Cash counted:</b> ${CUR} ${money(counted)}<br>
+    <b>Difference:</b> ${CUR} ${money(diff)} ${word}</p>`;
+}
+function vCharts(){
+  const days = [...Array(7)].map((_, k) => daysAgo(6 - k));
+  const tot = {};
+  db.sales.forEach(s => { tot[s.date] = (tot[s.date] || 0) + s.price * s.qty; });
+  const max = Math.max(1, ...days.map(d => tot[d] || 0));
+  const bars = days.map(d => { const v = tot[d] || 0;
+    return `<div class="barrow"><span>${d}</span><div class="bar" style="width:${Math.max(0, Math.round(v / max * 100))}%"></div>
+            <span>${CUR} ${money(v)}</span></div>`; }).join("");
+  const qty = {}, from = daysAgo(6);
+  db.sales.forEach(s => { if (s.date >= from && s.qty > 0) { const n = nameOf(s.itemId); qty[n] = (qty[n] || 0) + s.qty; } });
+  const top = Object.entries(qty).sort((a, b) => b[1] - a[1]).slice(0, 10);
+  const tmax = Math.max(1, ...top.map(x => x[1]));
+  const topBars = top.map(([n, q]) => `<div class="barrow"><span>${esc(n)}</span>
+    <div class="bar" style="width:${Math.round(q / tmax * 100)}%"></div><span>${q} units</span></div>`).join("");
+  page(T("charts"), `<h3>Revenue, last 7 days</h3>${bars}<h3>Top-selling items, last 7 days</h3>${topBars || "<p>No sales in the last 7 days.</p>"}`);
+}
+
+// ================= Staff, activity, data =================
+function vStaff(){
+  const admin = isAdmin();
+  page(T("staff"), `
+    <h3>Change my PIN</h3>
+    <div class="row"><input id="newpin" type="password" placeholder="New PIN">
+    <button class="btn" onclick="changePin()">Change PIN</button></div>
+    ${admin ? `<h3>Add staff</h3>
+    <div class="row"><input id="sname" placeholder="Name"><input id="spin" placeholder="PIN">
+      <select id="srole"><option value="cashier">Cashier</option><option value="admin">Owner / admin</option></select>
+      <button class="btn" onclick="addStaff()">Add staff</button></div>
+    <table><thead><tr><th>ID</th><th>Name</th><th>Role</th></tr></thead>
+      <tbody>${db.staff.map(s => `<tr><td>${s.id}</td><td>${esc(s.name)}</td><td>${s.role}</td></tr>`).join("")}</tbody></table>` : ""}`);
+}
+function changePin(){
+  const p = $("#newpin").value.trim();
+  if (!p) return alert("Enter a PIN.");
+  me.pin = p; logAct("changed own PIN"); save(); alert("PIN changed.");
+}
+function addStaff(){
+  if (!isAdmin()) return alert(T("owner_only") || "Only the owner can add staff.");
+  const name = $("#sname").value.trim(), pin = $("#spin").value.trim();
+  if (!name || !pin) return alert("Enter a name and a PIN.");
+  db.staff.push({id: ++db.seq.staff, name, pin, role: $("#srole").value});
+  logAct("added staff " + name); save(); vStaff();
+}
+function vActivity(){
+  if (needOwner()) return;
+  const rows = db.activity.slice(-100).reverse().map(a =>
+    `<tr><td>${a.date}</td><td>${a.time}</td><td>${esc(a.user)}</td><td>${esc(a.action)}</td></tr>`).join("");
+  page(T("activity"), `<table><thead><tr><th>Date</th><th>Time</th><th>User</th><th>Action</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="4">No activity yet.</td></tr>'}</tbody></table>`);
+}
+function downloadBackup(){ downloadText(`owetec-backup-${today()}.json`, JSON.stringify(db, null, 2), "application/json"); }
+function restoreFile(file){
+  if (!isAdmin()) return alert("Only the owner can restore data.");
+  const r = new FileReader();
+  r.onload = () => {
+    let obj;
+    try { obj = JSON.parse(r.result); if (!obj.items) throw new Error(); }
+    catch (e) { return alert("That file is not a valid backup."); }
+    if (prompt("This replaces all current data. Type YES to continue:") !== "YES") return;
+    db = Object.assign(fresh(), obj); save(); alert("Restored."); render();
+  };
+  r.readAsText(file);
+}
+function exportAll(){
+  downloadText(`sales_${today()}.csv`, toCSV([["receipt","date","customer_id","item","qty","unit_price","unit_cost","method"],
+    ...db.sales.map(s => [s.receipt, s.date, s.custId, nameOf(s.itemId), s.qty, money(s.price), money(s.cost), s.method])]), "text/csv");
+  downloadText(`stock_${today()}.csv`, toCSV([["item","barcode","cost","price","stock","reorder","earliest_expiry"],
+    ...db.items.filter(i => i.name !== EMPTY).map(i => [i.name, i.barcode, money(i.cost), money(i.price), i.qty, i.reorder, earliestExpiry(i.id)])]), "text/csv");
+  downloadText(`debts_${today()}.csv`, toCSV([["customer","phone","owes","credit_limit","points"],
+    ...db.customers.map(c => [c.name, c.phone, money(balance(c.id)), money(c.creditLimit), c.points])]), "text/csv");
+  downloadText(`expenses_${today()}.csv`, toCSV([["date","category","amount","note"],
+    ...db.expenses.map(e => [e.date, e.category, money(e.amount), e.note])]), "text/csv");
+}
+function vData(){
+  page(T("data"), `
+    <p><button class="btn" onclick="downloadBackup()">Download backup (.json)</button></p>
+    <p><label>Restore from a backup file (owner): <input type="file" id="restoreFile" accept=".json"></label></p>
+    <p><button class="btn" onclick="exportAll()">Export sales, stock, debts &amp; expenses (CSV for Excel)</button></p>
+    <p style="font-size:13px;color:var(--muted)">Data is saved automatically in this browser. Download a backup regularly and keep it safe.</p>`,
+    () => { $("#restoreFile").onchange = e => { if (e.target.files[0]) restoreFile(e.target.files[0]); }; });
+}
+
+// ================= Start =================
+const VIEWS = {home: vHome, sale: vSale, items: vItems, stock: vStock, customers: vCustomers, orders: vOrders,
+  reports: vReports, closing: vClosing, charts: vCharts, expenses: vExpenses, refund: vRefund, needs: vNeeds,
+  staff: vStaff, activity: vActivity, data: vData};
+
+seedIfNeeded();
+loginScreen();
+</script>
+</body>
+</html>
